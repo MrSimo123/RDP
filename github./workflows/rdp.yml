@@ -1,0 +1,46 @@
+name: Create RDP Session
+
+on: 
+  workflow_dispatch: # هذا يسمح لك بتشغيل الـ Workflow يدوياً
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Enable RDP Access
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+      
+      - name: Create User and Set Password
+        # يستخدم السر الذي أنشأته في الخطوة 2
+        run: |
+          net user runner "${{ secrets.RDP_PASSWORD }}" /add
+          net localgroup "Remote Desktop Users" runner /add
+
+      - name: Download and setup Ngrok
+        env:
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+        run: |
+          Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
+          Expand-Archive ngrok.zip
+          .\ngrok.exe config add-authtoken $env:NGROK_AUTH_TOKEN
+          # بدء تشغيل Ngrok في الخلفية وإنشاء ملف log
+          .\ngrok.exe tcp 3389 --log=stdout > ngrok.log &
+          
+      - name: Start RDP Tunnel and Show Credentials
+        run: |
+          echo "Waiting 15 seconds for Ngrok tunnel to establish..."
+          Start-Sleep -Seconds 15
+          echo "--- RDP Connection Details ---"
+          # قراءة بيانات الاتصال من ملف الـ log
+          $ngrokLog = Get-Content ngrok.log
+          $publicUrl = ($ngrokLog | Select-String "url=tcp://(.+)" | Select-Object -First 1).Matches.Groups[1].Value
+          echo "RDP Address: $publicUrl"
+          echo "Username: runner"
+          echo "Password: (the one you set in RDP_PASSWORD secret)"
+          echo "----------------------------------"
+          # هذه الخطوة مهمة لإبقاء الجلسة مفتوحة
+          Start-Sleep -Seconds 21600
